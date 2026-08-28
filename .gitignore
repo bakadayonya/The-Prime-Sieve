@@ -1,0 +1,36 @@
+# 编译输出
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+prime_sieve
+prime_sieve.exe
+
+# CMake
+build/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+CMakeUserPresets.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# 性能分析
+gmon.out
+*.prof
+*.gcda
+*.gcno
+
+# 临时文件
+*.tmp
+*.log
+*.out
