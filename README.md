@@ -4,7 +4,7 @@
 [![C++](https://img.shields.io/badge/C++-17-blue.svg)](https://isocpp.org/)
 [![OpenMP](https://img.shields.io/badge/OpenMP-Supported-green.svg)](https://www.openmp.org/)
 
-高性能素数筛法实现，支持 **2 ~ 10^18** 范围的素数查找。v6.0 引入动态分段、混合筛法和更精确的上界估计，性能大幅提升。
+高性能素数筛法实现，支持 **2 ~ 10^18** 范围的素数查找。这个版本引入动态分段、混合筛法和更精确的上界估计，性能大幅提升。
 
 ## ✨ 特性
 
@@ -137,7 +137,7 @@ make -j$(nproc)
 
 ```
 .
-├── prime_sieve.cpp      # 主程序源码 (v6.0)
+├── prime_sieve.cpp      # 主程序源码
 ├── CMakeLists.txt       # CMake构建配置
 ├── LICENSE              # MIT许可证
 └── README.md           # 本文件
