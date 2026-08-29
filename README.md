@@ -156,11 +156,6 @@ const int MR_BASE_COUNT = 12;              // Miller-Rabin基底数
 
 本项目采用 MIT 许可证 - 详见 LICENSE 文件
 
-🙏 致谢
-
-· 算法参考：PrimeSieve by Kim Walisch
-· Miller-Rabin 确定性基底：OEIS A014233
-
 📧 联系方式
 
 如有问题或建议，请提交 Issue 或联系 [Your Email]
