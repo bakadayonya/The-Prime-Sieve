@@ -26,7 +26,6 @@ v8.0 引入真正的**模 30 轮子分段筛**，修复了此前分段筛漏标 
 
 ## ✨ 特性 / Features
 
-<<<<<<< HEAD
 *测试设备：8 核 AArch64（8GB 内存），-O3 -march=native，默认线程数。数值随机器与编译器略有浮动。*
 
 | 测试场景 | 耗时 | 说明 |
@@ -208,7 +207,6 @@ ctest            # 运行内置正确性测试 / run built-in correctness tests
 ./prime_sieve
 ```
 
-<<<<<<< HEAD
 按菜单选择：
 
 1. 按位数查找
