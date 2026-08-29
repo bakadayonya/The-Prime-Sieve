@@ -1,8 +1,3 @@
-好的，根据v6.0的优化特性，为你生成对应的README.md内容：
-
----
-
-```markdown
 # 超级素数筛 (Super Prime Sieve) v6.0
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -200,5 +195,3 @@ const long long LARGE_RANGE_MR_THRESHOLD = 100'000'000'000LL;
 ---
 
 ⭐ 如果这个项目对你有帮助，请给个 Star！
-
-```
