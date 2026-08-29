@@ -1,4 +1,4 @@
-# 超级素数筛 (Super Prime Sieve) v6.0
+# 一个素数筛 (The Prime Sieve)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![C++](https://img.shields.io/badge/C++-17-blue.svg)](https://isocpp.org/)
