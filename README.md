@@ -43,18 +43,18 @@
 ### Linux / macOS
 ```bash
 # 使用GCC
-g++ -O3 -march=native -fopenmp -std=c++17 -o prime_sieve prime_sieve.cpp
+g++ -O3 -march=native -flto -funroll-loops -fopenmp -o prime_sieve prime_sieve.cpp -lm
 
 # 使用Clang
-clang++ -O3 -march=native -fopenmp -std=c++17 -o prime_sieve prime_sieve.cpp
+clang++ -O3 -march=native -flto=thin -funroll-loops -fopenmp=libomp -o prime_sieve prime_sieve.cpp -lm
 ```
 
-(作者我使用的是clang)
+(作者我使用的clang++-21)
 
 Windows (MinGW)
 
 ```bash
-g++ -O3 -march=native -fopenmp -std=c++17 -o prime_sieve.exe prime_sieve.cpp
+g++ -O3 -march=native -flto -funroll-loops -fopenmp -o prime_sieve.exe prime_sieve.cpp -lm
 ```
 
 使用CMake
