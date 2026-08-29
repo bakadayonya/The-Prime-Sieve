@@ -1,22 +1,31 @@
-# 超级素数筛 (Super Prime Sieve)
+好的，根据v6.0的优化特性，为你生成对应的README.md内容：
+
+---
+
+```markdown
+# 超级素数筛 (Super Prime Sieve) v6.0
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![C++](https://img.shields.io/badge/C++-17-blue.svg)](https://isocpp.org/)
 [![OpenMP](https://img.shields.io/badge/OpenMP-Supported-green.svg)](https://www.openmp.org/)
 
-高性能素数筛法实现，支持 **2 ~ 10^18** 范围的素数查找。自动选择最优算法，充分利用多核CPU性能。
+高性能素数筛法实现，支持 **2 ~ 10^18** 范围的素数查找。v6.0 引入动态分段、混合筛法和更精确的上界估计，性能大幅提升。
 
 ## ✨ 特性
 
-- 🚀 **混合算法**：分段埃氏筛 + 确定性Miller-Rabin素性测试
-- ⚡ **并行计算**：基于OpenMP的多线程并行筛法
-- 🎯 **智能优化**：轮式筛法（Wheel Sieve）、位图存储、缓存友好分段
+- 🚀 **混合算法**：分段埃氏筛 + 确定性Miller-Rabin素性测试，自动切换
+- ⚡ **并行计算**：基于OpenMP的多线程并行筛法，线程局部位图复用
+- 🎯 **智能优化**：
+  - 动态分段大小（感知L3缓存，自动调整）
+  - 混合筛法（小素数预筛 + MR快速验证）
+  - 位图存储，缓存友好
+  - 无排序并行合并（线程区间连续，直接拼接）
 - 🌍 **双语支持**：中文/英文界面，自动切换
 - 🔍 **多功能**：
   - 按位数查找素数
   - 自定义区间筛选
-  - 单个大数素性检测
-  - 查找第n个素数
+  - 单个大数素性检测（含快速MR版本）
+  - 查找第n个素数（Rosser–Schoenfeld精确上界）
   - 性能基准测试
 - 📊 **详细统计**：素数总数、密度、耗时等
 
@@ -27,9 +36,9 @@
 | 2 ~ 10^7 | ~0.06秒 | 全部素数 |
 | 2 ~ 10^8 | ~0.2秒 | 全部素数 |
 | 第 10^7 个素数 | ~0.7秒 | 即 1179424673 |
-
 *测试设备内存仅8GB且为AArch64
 
+*测试环境：8GB内存，AArch64架构，4线程*
 
 ## 🛠️ 编译
 
@@ -46,13 +55,13 @@ g++ -O3 -march=native -fopenmp -std=c++17 -o prime_sieve prime_sieve.cpp
 clang++ -O3 -march=native -fopenmp -std=c++17 -o prime_sieve prime_sieve.cpp
 ```
 
-### Windows (MinGW)
+Windows (MinGW)
 
 ```bash
 g++ -O3 -march=native -fopenmp -std=c++17 -o prime_sieve.exe prime_sieve.cpp
 ```
 
-### 使用CMake
+使用CMake
 
 ```bash
 mkdir build && cd build
@@ -60,9 +69,7 @@ cmake ..
 make -j$(nproc)
 ```
 
-
-
-# 🎮 使用
+🎮 使用
 
 交互式模式
 
@@ -75,8 +82,8 @@ make -j$(nproc)
 1. 按位数查找 - 查找指定位数的所有素数
 2. 自定义区间 - 指定 [low, high] 范围筛选
 3. 单个数检测 - 快速判断大数是否为素数
-4. 第n个素数 - 查找第 n 个素数
-5. 性能测试 - 运行基准测试
+4. 第n个素数 - 查找第 n 个素数（使用精确上界估计）
+5. 性能测试 - 运行基准测试 (2~10^7)
 
 示例
 
@@ -92,54 +99,83 @@ make -j$(nproc)
 73  79  83  89  97
 ```
 
-🧠 算法详解
+🧠 算法详解（v6.0 新特性）
 
-1. 分段埃氏筛 (Segmented Sieve)
+1. 动态分段大小
 
-· 将大区间分成小块（默认 5,000,000），适应CPU缓存
-· 每个分段使用位图（bitmap）存储，内存效率高
-· 仅用小于 √high 的素数进行筛选
+· 根据 L3 缓存大小（默认 8MB）和线程数动态计算
+· 公式：seg_size = (L3_cache / threads * 0.7) * 16
+· 范围：100,000 ~ 10,000,000，自动对齐到4的倍数
 
-2. 确定性 Miller-Rabin
+2. 混合筛法 (Hybrid Sieve)
 
-· 对 64位整数使用 12 个固定基底
+· 当区间 > 1e12 且区间长度 < 1e6 时启用
+· 步骤：
+  1. 用前200个小素数预筛，快速排除合数
+  2. 候选数使用 is_prime_mr_fast 并行验证（跳过小素数检查）
+· 适合大数区间的稀疏素数查找
+
+3. 线程局部位图复用
+
+· 使用 thread_local 缓存位图，避免重复分配
+· 每个分段仅需 fill 重置，大幅减少内存分配开销
+
+4. 无排序并行合并
+
+· 线程分配连续区间，且内部有序
+· 直接拼接结果，无需 sort()，O(n log n) → O(n)
+
+5. 第n个素数精确上界
+
+· 对 n ≥ 7022 使用 Rosser–Schoenfeld 公式：
+  · upper_bound = n * (logn + loglogn - 0.9385)
+  · 更紧凑，减少上界扩展次数
+
+6. 确定性 Miller-Rabin
+
+· 对64位整数使用12个固定基底 {2,3,5,7,11,13,17,19,23,29,31,37}
 · 数学保证：通过测试的数必定为素数
-· 时间复杂度 O(k·log³n)，k为基底数
-
-3. 轮式筛法 (Wheel Sieve)
-
-· 基于模30剩余类 {1,7,11,13,17,19,23,29}
-· 跳过 73.3% 的合数，减少标记次数
-
-4. OpenMP 并行
-
-· 大区间按线程数切分，并行处理
-· 动态调度（schedule(dynamic)）均衡负载
+· v6.0 拆分为 is_prime_mr（完整版）和 is_prime_mr_fast（跳过预筛）
 
 📁 项目结构
 
 ```
 .
-├── prime_sieve.cpp      # 主程序源码
+├── prime_sieve.cpp      # 主程序源码 (v6.0)
 ├── CMakeLists.txt       # CMake构建配置
 ├── LICENSE              # MIT许可证
 └── README.md           # 本文件
 ```
 
-🔧 配置参数
+🔧 配置参数（v6.0）
 
 在源码开头可调整：
 
 ```cpp
-const long long SEGMENT_SIZE = 5'000'000;  // 分段大小（字节）
-const int MR_BASE_COUNT = 12;              // Miller-Rabin基底数
+const int MR_BASE_COUNT = 12;                    // Miller-Rabin基底数
+const long long SMALL_PRIME_LIMIT = 2000;        // 预筛小素数范围
+const size_t SMALL_PRIME_COUNT = 200;            // 预筛使用前N个素数
+const long long HYBRID_THRESHOLD = 1'000'000'000'000LL;  // 混合筛触发阈值
+const long long LARGE_RANGE_MR_THRESHOLD = 100'000'000'000LL;
 ```
 
 ⚠️ 注意事项
 
-· 大数范围：虽然支持到 10^18，但区间过大（>10^9）可能耗时很长
-· 内存使用：分段筛内存占用约 SEGMENT_SIZE / 2 字节，约2.5MB
+· 大数范围：支持到 10^18，但区间过大（>10^9）可能耗时很长
+· 内存使用：动态分段，单线程位图约占用 seg_size / 2 字节（~0.05~5MB）
 · 线程数：默认使用所有CPU核心，可通过 export OMP_NUM_THREADS=N 调整
+· L3缓存：如系统L3缓存不是8MB，可修改 get_dynamic_segment_size() 中的值
+
+🔄 版本演进
+
+主要改进
+
+· ✅ 固定分段 → 动态分段（L3感知）
+· ✅ 每段分配位图 → 线程局部位图复用
+· ✅ 并行后排序 → 无排序直接拼接
+· ✅ 简单上界 → Rosser–Schoenfeld 精确上界
+· ✅ 完整MR → 快速MR（预筛后使用）
+· ❌ 移除轮式筛法（mod 30）→ 避免取模开销
 
 🤝 贡献
 
@@ -149,8 +185,9 @@ const int MR_BASE_COUNT = 12;              // Miller-Rabin基底数
 
 ☐ 支持命令行参数（非交互模式）
 ☐ 输出格式选项（JSON, CSV）
-☐ 更高效的素性测试（如 Baillie-PSW）
+☐ Baillie-PSW 素性测试
 ☐ 支持 128位整数
+☐ 自适应线程数调整
 
 📄 许可证
 
