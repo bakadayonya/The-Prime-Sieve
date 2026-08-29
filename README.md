@@ -49,6 +49,8 @@ g++ -O3 -march=native -fopenmp -std=c++17 -o prime_sieve prime_sieve.cpp
 clang++ -O3 -march=native -fopenmp -std=c++17 -o prime_sieve prime_sieve.cpp
 ```
 
+(作者我使用的是clang)
+
 Windows (MinGW)
 
 ```bash
