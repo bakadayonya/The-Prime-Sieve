@@ -37,6 +37,10 @@ install(TARGETS prime_sieve DESTINATION bin)
 # 测试（可选）
 enable_testing()
 add_test(NAME test_small_range 
-    COMMAND prime_sieve 2 100
+    COMMAND prime_sieve -r 2 100
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+add_test(NAME test_check_prime
+    COMMAND prime_sieve -c 97
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
