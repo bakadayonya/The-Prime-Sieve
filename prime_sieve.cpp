@@ -1,6 +1,6 @@
 // ============================================================================
 //  超级素数筛 - 极致优化版 v8.0 (支持命令行参数)
-//  特性：动态 Miller-Rabin、大预筛、模6轮子分段筛、OpenMP 并行、混合策略
+//  特性：动态 Miller-Rabin、大预筛、模30轮子分段筛、OpenMP 并行、混合策略
 //  用法：./prime_sieve [选项]
 //  无参数时进入交互模式
 // ============================================================================
@@ -39,7 +39,6 @@ const long long SMALL_PRIME_LIMIT_MIN = 2000;   // 最小预筛上限
 const long long SMALL_PRIME_LIMIT_MAX = 50000;  // 最大预筛上限
 
 const long long HYBRID_THRESHOLD = 10'000'000'000LL;
-const long long LARGE_RANGE_MR_THRESHOLD = 100'000'000'000LL;
 // 每个分段覆盖的区间宽度（模 30 位图约 8/30 * SEG_SIZE 位，约 136 KB/线程）
 const long long SEG_SIZE = 4 * 1024 * 1024;
 
@@ -58,7 +57,7 @@ bool g_quiet = false;
 string g_output_file;              // 空表示不输出到文件
 
 // 操作类型
-enum Action { ACTION_NONE, ACTION_RANGE, ACTION_DIGITS, ACTION_CHECK, ACTION_NTH, ACTION_PERF };
+enum Action { ACTION_NONE, ACTION_RANGE, ACTION_DIGITS, ACTION_CHECK, ACTION_NTH, ACTION_PERF, ACTION_VERIFY };
 Action g_action = ACTION_NONE;
 long long g_low = 0, g_high = 0;
 long long g_nth = 0;
@@ -231,16 +230,12 @@ inline long long get_segment_size() {
 
 // 与 30 互质的剩余类（升序）
 static const uint8_t WHEEL_R[8] = {1, 7, 11, 13, 17, 19, 23, 29};
-// 剩余类 -> 下标，非剩余类为 -1
-static int8_t WHEEL_POS[30];
 // 剩余类 -> 其在 mod 30 下的乘法逆元
 static uint8_t WHEEL_INV[30];
 static once_flag g_wheel_init_flag;
 
 static void init_wheel() {
-    for (int i = 0; i < 30; ++i) WHEEL_POS[i] = -1;
     for (int k = 0; k < 8; ++k) {
-        WHEEL_POS[WHEEL_R[k]] = (int8_t)k;
         for (int inv = 1; inv < 30; inv += 2)
             if ((WHEEL_R[k] * inv) % 30 == 1) { WHEEL_INV[WHEEL_R[k]] = (uint8_t)inv; break; }
     }
@@ -433,8 +428,11 @@ vector<long long> segmented_sieve_large(long long low, long long high) {
     if (low < 2) low = 2;
     if (low > high) return {};
 
-    // 对非常大的区间或特殊区间使用混合筛
-    if ((high - low < 1'000'000LL && high > HYBRID_THRESHOLD) || high > LARGE_RANGE_MR_THRESHOLD) {
+    // 混合筛只适合「稀疏大数区间」：区间宽度很小但 high 很大。
+    // 注意按区间宽度（而非 high）判定：宽区间即使 high 很大也走分段筛，
+    // 因为分段筛内存只取决于段宽、与 high 无关；若这里按 high 无条件切混合筛，
+    // 会把整个区间的奇数位图一次性物化，导致内存爆炸（如 digits>=12 时崩溃）。
+    if (high - low < 1'000'000LL && high > HYBRID_THRESHOLD) {
         return hybrid_sieve(low, high);
     }
 
@@ -718,6 +716,67 @@ void run_performance() {
 }
 
 // ============================================================================
+//  内置正确性自检（--verify）
+//  校验已知 π(x)、Miller-Rabin、分段筛与混合筛一致性；供 ctest 使用。
+//  返回失败数（0 = 全部通过），供主函数作为退出码。
+// ============================================================================
+
+int run_verify() {
+    int failures = 0;
+    auto report = [&](const char* name, bool ok) {
+        cout << (ok ? "[PASS] " : "[FAIL] ") << name;
+        if (!ok) ++failures;
+        cout << endl;
+    };
+
+    // 1) 已知 π(x)（素数计数）
+    struct { long long x; long long pi; } pi_checks[] = {
+        {1000000,   78498},
+        {10000000,  664579},
+        {100000000, 5761455},
+    };
+    for (auto& c : pi_checks) {
+        long long got = prime_count(c.x);
+        char buf[128];
+        snprintf(buf, sizeof(buf), "π(%lld) = %lld", c.x, got);
+        report(buf, got == c.pi);
+    }
+
+    // 2) Miller-Rabin 已知素数/合数
+    struct { uint64_t n; bool prime; } mr_checks[] = {
+        {2ULL, true}, {3ULL, true}, {97ULL, true}, {999983ULL, true},
+        {2147483647ULL, true},            // 2^31-1
+        {1000000ULL, false}, {2147483646ULL, false},
+        {4294967297ULL, false},           // 641 * 6700417
+    };
+    for (auto& c : mr_checks) {
+        bool got = is_prime_mr(c.n);
+        char buf[160];
+        snprintf(buf, sizeof(buf), "MR(%llu) 期望=%s 实际=%s",
+                 (unsigned long long)c.n, c.prime ? "prime" : "composite", got ? "prime" : "composite");
+        report(buf, got == c.prime);
+    }
+
+    // 3) 分段筛 vs 混合筛 在稀疏大数区间上结果一致
+    {
+        long long lo = 999999999989LL, hi = 1000000000039LL;
+        vector<long long> a, b;
+        ensure_base_primes(hi);
+        segmented_sieve_append(lo, hi, g_base_primes, a);
+        b = hybrid_sieve(lo, hi);
+        bool same = (a == b);
+        char buf[128];
+        snprintf(buf, sizeof(buf), "seg vs hybrid [%lld, %lld] 分段=%zu 混合=%zu",
+                 lo, hi, a.size(), b.size());
+        report(buf, same);
+    }
+
+    cout << _("\n验证完成，失败 ", "\nVerification done, ")
+         << failures << _(" 项。", " failure(s).") << endl;
+    return failures;
+}
+
+// ============================================================================
 //  交互模式主循环
 // ============================================================================
 
@@ -728,8 +787,8 @@ void run_interactive() {
     cout << _("支持范围: 2 ~ 10^18（更大可能极慢）",
               "Supported: 2 ~ 10^18 (larger may be slow)")
          << endl;
-    cout << _("自动切换分段筛 / 混合筛（OpenMP + 动态调度 + 模6轮子）",
-              "Auto-select segmented/hybrid sieve (OpenMP + dynamic scheduling + mod6 wheel)")
+    cout << _("自动切换分段筛 / 混合筛（OpenMP + 动态调度 + 模30轮子）",
+              "Auto-select segmented/hybrid sieve (OpenMP + dynamic scheduling + mod30 wheel)")
          << endl
          << endl;
 
@@ -863,6 +922,8 @@ void print_usage(const char* prog) {
               "  -n, --nth N               Find the N-th prime\n")
          << _("  -p, --perf                运行性能测试 (2~10^7)\n",
               "  -p, --perf                Run performance test (2~10^7)\n")
+         << _("  -v, --verify              运行内置正确性自检 (ctest 用)\n",
+              "  -v, --verify              Run built-in correctness self-test (for ctest)\n")
          << _("  -o, --output FILE         将结果输出到文件 (默认标准输出)\n",
               "  -o, --output FILE         Write results to FILE (default stdout)\n")
          << _("  -q, --quiet               安静模式 (仅显示统计信息)\n",
@@ -955,6 +1016,8 @@ bool parse_arguments(int argc, char* argv[]) {
             }
         } else if (arg == "-p" || arg == "--perf") {
             g_action = ACTION_PERF;
+        } else if (arg == "-v" || arg == "--verify") {
+            g_action = ACTION_VERIFY;
         } else if (arg == "-o" || arg == "--output") {
             if (i + 1 < argc) {
                 g_output_file = argv[++i];
@@ -990,7 +1053,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    if (g_interactive_mode || (argc == 1)) {
+    if (g_interactive_mode) {
         run_interactive();
         return 0;
     }
@@ -1011,6 +1074,8 @@ int main(int argc, char* argv[]) {
         case ACTION_PERF:
             run_performance();
             break;
+        case ACTION_VERIFY:
+            return run_verify();
         default:
             cerr << _("未知操作", "Unknown action") << endl;
             return 1;

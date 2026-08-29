@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.12)
-project(PrimeSieve VERSION 5.0.0 LANGUAGES CXX)
+project(PrimeSieve VERSION 8.0.0 LANGUAGES CXX)
 
 # C++17 标准
 set(CMAKE_CXX_STANDARD 17)
@@ -43,4 +43,13 @@ add_test(NAME test_small_range
 add_test(NAME test_check_prime
     COMMAND prime_sieve -c 97
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+# 内置正确性自检：校验已知 π(x)、Miller-Rabin、分段筛/混合筛一致性。
+# prime_sieve -v 返回非零退出码表示存在失败项，ctest 据此判定通过/失败。
+add_test(NAME verify_correctness
+    COMMAND prime_sieve -v
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+set_tests_properties(verify_correctness PROPERTIES
+    TIMEOUT 120
 )
