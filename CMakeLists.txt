@@ -34,8 +34,21 @@ else()
         "cmake -DCMAKE_CXX_COMPILER=clang++-21 ..")
 endif()
 
-# 添加可执行文件
-add_executable(prime_sieve prime_sieve.cpp)
+# 添加可执行文件（源码拆分到 src/ 目录）
+add_executable(prime_sieve
+    src/main.cpp
+    src/config.cpp
+    src/cli.cpp
+    src/actions.cpp
+    src/interactive.cpp
+    src/output.cpp
+    src/primality.cpp
+    src/sieve.cpp
+    src/pi.cpp
+)
+
+# 头文件目录
+target_include_directories(prime_sieve PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 # 设置属性
 set_target_properties(prime_sieve PROPERTIES

@@ -62,17 +62,29 @@
 
 ## 🛠️ 编译 / Building
 
+### 项目结构 / Project structure
+```
+include/       头文件（config / primality / sieve / pi / output / actions / cli / interactive）
+src/           实现（main / config / primality / sieve / pi / output / actions / cli / interactive）
+```
+
 ### 依赖 / Dependencies
 - C++17 兼容编译器 (GCC 7+, Clang 6+, MSVC 2019+)
 - OpenMP（可选，但推荐启用）/ optional but recommended
 
 ### 直接编译 / Direct compile
+源码已拆分为多模块：`src/`（实现）与 `include/`（头文件）。直接编译需列出全部源文件：
+
 ```bash
 # GCC
-g++ -O3 -march=native -fopenmp -std=c++17 -o prime_sieve prime_sieve.cpp
+g++ -O3 -march=native -fopenmp -std=c++17 -Iinclude -o prime_sieve src/main.cpp \
+    src/config.cpp src/cli.cpp src/actions.cpp src/interactive.cpp src/output.cpp \
+    src/primality.cpp src/sieve.cpp src/pi.cpp
 
 # Clang（推荐 clang++-21，自带 omp.h 与 libomp.so）
-clang++-21 -O3 -march=native -fopenmp -std=c++17 -o prime_sieve prime_sieve.cpp
+clang++-21 -O3 -march=native -fopenmp -std=c++17 -Iinclude -o prime_sieve src/main.cpp \
+    src/config.cpp src/cli.cpp src/actions.cpp src/interactive.cpp src/output.cpp \
+    src/primality.cpp src/sieve.cpp src/pi.cpp
 ```
 
 ### 使用 CMake（推荐）/ With CMake (recommended)
