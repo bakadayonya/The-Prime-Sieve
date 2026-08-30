@@ -55,8 +55,8 @@
 # GCC
 g++ -O3 -march=native -fopenmp -std=c++17 -o prime_sieve prime_sieve.cpp
 
-# Clang
-clang++ -O3 -march=native -fopenmp -std=c++17 -o prime_sieve prime_sieve.cpp
+# Clang（推荐 clang++-21，自带 omp.h 与 libomp.so）
+clang++-21 -O3 -march=native -fopenmp -std=c++17 -o prime_sieve prime_sieve.cpp
 ```
 
 ### 使用 CMake（推荐）/ With CMake (recommended)
@@ -65,6 +65,16 @@ mkdir build && cd build
 cmake ..
 make -j$(nproc)
 ctest            # 运行内置正确性测试 / run built-in correctness tests
+```
+
+CMake 默认使用系统编译器（通常为 GCC）。如需使用 **clang++-21**（自带 OpenMP 头文件与 libomp），
+配置时显式指定编译器即可，`find_package(OpenMP)` 会自动设置正确的 `-fopenmp` 编译/链接选项：
+
+```bash
+mkdir build && cd build
+cmake -DCMAKE_CXX_COMPILER=clang++-21 ..
+make -j$(nproc)
+ctest
 ```
 
 ## 🎮 使用 / Usage

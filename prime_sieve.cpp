@@ -455,7 +455,7 @@ vector<long long> segmented_sieve_large(long long low, long long high) {
             segmented_sieve_append(seg_low, seg_high, g_base_primes, local);
         }
 
-        thread_results[tid] = move(local);
+        thread_results[tid] = std::move(local);
     }
 
     // schedule(dynamic) 下各线程拿到的是非连续的段，故每线程结果虽升序，
