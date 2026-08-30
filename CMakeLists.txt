@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.12)
-project(PrimeSieve VERSION 8.0.0 LANGUAGES CXX)
+project(PrimeSieve VERSION 9.0.0 LANGUAGES CXX)
 
 # ============================================================================
 #  编译器选择 / Compiler selection

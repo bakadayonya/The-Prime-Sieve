@@ -1,15 +1,19 @@
-# 超级素数筛 (Super Prime Sieve) v8.0
+# 超级素数筛 (Super Prime Sieve) v9.0
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![C++](https://img.shields.io/badge/C++-17-blue.svg)](https://isocpp.org/)
 [![OpenMP](https://img.shields.io/badge/OpenMP-Supported-green.svg)](https://www.openmp.org/)
 
 高性能素数筛法实现，支持 **2 ~ 10^18** 范围的素数查找。v8.0 引入真正的**模 30 轮子分段筛**，
-修复了此前分段筛漏标 3 的倍数、以及并行结果乱序的问题，性能与正确性同步提升。
+修复了此前分段筛漏标 3 的倍数、以及并行结果乱序的问题；**v9.0** 为第 n 个素数加入
+**Meissel-Lehmer 素数计数**，把二分每步都重筛全区间改为亚毫秒级的 π(x) 查询，
+第 10^7 个素数从约 7 秒降至约 0.2 秒。
 
 > A high-performance prime number sieve supporting the range **2 ~ 10^18**.
-> v8.0 introduces a true **mod-30 wheel segmented sieve**, fixing two earlier bugs — multiples of 3
+> v8.0 introduced a true **mod-30 wheel segmented sieve**, fixing two earlier bugs — multiples of 3
 > never being marked as composite, and out-of-order output from the parallel path — while also improving speed.
+> **v9.0** adds a **Meissel–Lehmer** prime-count to the nth-prime path: binary-search steps now use
+> sub-millisecond π(x) instead of re-sieving the whole range, cutting the 10^7-th prime from ~7 s to ~0.2 s.
 
 ## ✨ 特性 / Features
 
@@ -20,10 +24,16 @@
   OpenMP multi-threaded sieving with per-thread bitmap reuse; **k-way merge** keeps the global output ordered.
 - 🎯 **混合筛法 / Hybrid sieve**：大数稀疏区间自动切换「小素数预筛 + 确定性 Miller-Rabin」，无需生成到 √high 的全部基础素数。
   Auto-switches to "small-prime presieve + deterministic Miller-Rabin" for sparse large ranges, avoiding a huge base-prime table up to √high.
-- 🧠 **计数专用路径 / Counting-only path**：`prime_count` 只计数不建向量，二分查找第 n 个素数更省内存。
-  `prime_count` counts without building a vector, saving memory during the nth-prime binary search.
-- 🧪 **内置自检 / Built-in self-test**：`-v, --verify` 校验已知 π(x)、Miller-Rabin 与分段/混合筛一致性，供 `ctest` 使用。
-  `-v, --verify` validates known π(x), Miller-Rabin, and segmented/hybrid agreement; used by `ctest`.
+- 🧮 **Meissel–Lehmer 素数计数 / Meissel–Lehmer prime count**：`lehmer_pi` 亚毫秒计算 π(x)（phi 与 π 均记忆化），
+  二分求第 n 个素数不再整段重筛，10^7 第素数 ~7s → ~0.2s，10^8 第素数 ~0.5s。
+  `lehmer_pi` computes π(x) in sub-millisecond time (both phi and π results are memoized); nth-prime
+  binary search no longer re-sieves the whole range — the 10^7-th prime drops from ~7 s to ~0.2 s, the 10^8-th to ~0.5 s.
+- 🧠 **计数专用路径 / Counting-only path**：`prime_count` 只计数不建向量，省内存；亦用作 Lehmer 的自检交叉验证。
+  `prime_count` counts without building a vector, saving memory; it also serves as the self-test cross-check for Lehmer.
+- 🧪 **内置自检 / Built-in self-test**：`-v, --verify` 校验已知 π(x)、Miller-Rabin、分段/混合筛一致性，
+  并交叉验证 Lehmer vs 分段筛 π(x) 与已知第 n 个素数，供 `ctest` 使用。
+  `-v, --verify` validates known π(x), Miller-Rabin, segmented/hybrid agreement, plus a Lehmer-vs-segmented
+  π(x) cross-check and known nth primes; used by `ctest`.
 - 🌍 **双语支持 / Bilingual UI**：中文/英文界面，交互与命令行均可切换。
   Chinese/English interface, switchable in both interactive and CLI modes.
 - 🔍 **多功能 / Multiple functions**：按位数查找、自定义区间、单个大数素性检测、第 n 个素数、性能基准。
@@ -41,8 +51,14 @@
 | 2 ~ 10^7 | ~0.12 秒 | 全部素数 / all primes |
 | 2 ~ 10^8 | ~0.6 秒 | 全部素数 / all primes |
 | 2 ~ 5×10^8 | ~2.9 秒 | 全部素数 / all primes |
-| 第 10^7 个素数 / 10^7-th prime | ~9.6 秒 | 即 / i.e. 179424673 |
+| 第 10^7 个素数 / 10^7-th prime | **~0.2 秒**（v8.0 ~7 秒 / v8.0+ 优化前）| 即 / i.e. 179424673 |
+| 第 10^8 个素数 / 10^8-th prime | **~0.5 秒** | 即 / i.e. 2038074743 |
 | 混合筛 [10^12, 10^12+5×10^6] / hybrid | ~0.05 秒 | 稀疏大数区间 / sparse large range |
+
+> 注：上表第 n 个素数为本机（x86_64, GCC 14, -O3 -march=native）实测，含约 0.3 秒的一次性
+> Lehmer 基础素数表初始化（后续调用复用缓存，耗时远低于首查）。
+> Note: nth-prime times above are measured on this machine (x86_64, GCC 14, -O3 -march=native) and
+> include ~0.3 s of one-time Lehmer table init; later calls reuse the memoized cache.
 
 ## 🛠️ 编译 / Building
 
@@ -204,7 +220,7 @@ ctest
 
 ```
 .
-├── prime_sieve.cpp      # 主程序源码 (v8.0) / main source
+├── prime_sieve.cpp      # 主程序源码 (v9.0) / main source
 ├── CMakeLists.txt       # CMake 构建配置（含正确性测试）/ build config + tests
 ├── LICENSE              # MIT 许可证 / MIT license
 └── README.md            # 本文件 / this file
@@ -221,6 +237,10 @@ const long long SMALL_PRIME_LIMIT_MIN = 2000;   // 混合筛最小预筛上限 /
 const long long SMALL_PRIME_LIMIT_MAX = 50000;  // 混合筛最大预筛上限 / hybrid max presieve limit
 const long long HYBRID_THRESHOLD = 10'000'000'000LL;      // 混合筛触发阈值 / hybrid trigger
 const long long SEG_SIZE = 4 * 1024 * 1024;               // 分段区间宽度 / segment width
+// Meissel-Lehmer（第 n 个素数用）：
+const int LEHMER_SIEVE_LIMIT = 5'000'000;   // Lehmer 前缀表/基础素数表上限
+const int LEHMER_PHI_N = 200'000;           // phi 记忆表 x 上限
+const int LEHMER_PHI_S = 7;                 // phi 记忆表 s 上限
 ```
 
 ## ⚠️ 注意事项 / Notes
@@ -242,6 +262,12 @@ const long long SEG_SIZE = 4 * 1024 * 1024;               // 分段区间宽度 
 - ✅ 混合筛按 high 无条件切换 → 按区间宽度切换（修复大区间 OOM）/ hybrid switch by high → by range width (fixes OOM on large ranges)
 - ✅ 新增 `-v, --verify` 内置正确性自检（供 ctest 使用）/ added `-v, --verify` built-in correctness self-test (for ctest)
 - ✅ 命令行参数、输出到文件 / CLI args, file output
+- ✅ **v9.0**：第 n 个素数改走 Meissel–Lehmer π(x)（phi/π 记忆化），二分不再重筛全区间
+  第 10^7 素数 ~7s → ~0.2s / **v9.0**: nth-prime uses Meissel–Lehmer π(x) (memoized phi/π);
+  binary search no longer re-sieves the whole range — 10^7-th prime ~7s → ~0.2s
+- ✅ **v9.0**：去重 `segmented_sieve_append`/`count_primes_range` → 共享 `scan_segment`；
+  输出文件样板 → RAII `OutputSink`；删除冗余 `is_prime_mr_hybrid` / **v9.0**: deduplicated the two
+  scan loops into shared `scan_segment`; file-output boilerplate → RAII `OutputSink`; removed redundant wrapper
 
 ## 📄 许可证 / License
 

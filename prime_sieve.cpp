@@ -1,6 +1,7 @@
 // ============================================================================
-//  超级素数筛 - 极致优化版 v8.0 (支持命令行参数)
-//  特性：动态 Miller-Rabin、大预筛、模30轮子分段筛、OpenMP 并行、混合策略
+//  超级素数筛 - 极致优化版 v9.0 (支持命令行参数)
+//  特性：动态 Miller-Rabin、大预筛、模30轮子分段筛、OpenMP 并行、混合策略、
+//        Meissel-Lehmer 素数计数（第 n 个素数亚秒级）
 //  用法：./prime_sieve [选项]
 //  无参数时进入交互模式
 // ============================================================================
@@ -19,6 +20,7 @@
 #include <omp.h>
 #include <queue>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 using namespace std;
@@ -168,11 +170,6 @@ bool is_prime_mr(uint64_t n) {
     return is_prime_mr_fast(n);
 }
 
-inline bool is_prime_mr_hybrid(uint64_t n) {
-    // 混合筛中已排除小素数，直接进行 MR 测试
-    return is_prime_mr_fast(n);
-}
-
 // ============================================================================
 //  简单奇数筛（用于生成基础素数表）
 // ============================================================================
@@ -278,6 +275,27 @@ static long long mark_segment(long long low, long long high,
     return num_blocks;
 }
 
+// 扫描已标记位图，把 [low, high] 内每个素数逐个交给 emit(n)。
+// low 需已 clamp 到 >=7（2、3、5 已另行处理）。count/append 两个用途共用此函数。
+template <typename Emit>
+static void scan_segment(long long low, long long high,
+                         const vector<uint64_t>& bits,
+                         Emit&& emit) {
+    long long seg_base_q = low / 30;
+    long long num_blocks = high / 30 - seg_base_q + 1;
+    const uint64_t* bp = bits.data();
+    for (long long q = 0; q < num_blocks; ++q) {
+        long long nbase = 30 * (seg_base_q + q);
+        for (int k = 0; k < 8; ++k) {
+            long long n = nbase + WHEEL_R[k];
+            if (n < low) continue;
+            if (n > high) break;
+            size_t idx = (size_t)(8 * q + k);
+            if (bp[idx >> 6] & (1ULL << (idx & 63))) emit(n);
+        }
+    }
+}
+
 void segmented_sieve_append(long long low, long long high,
                             const vector<long long>& base_primes,
                             vector<long long>& out_primes) {
@@ -289,19 +307,8 @@ void segmented_sieve_append(long long low, long long high,
     if (low < 7) low = 7;
 
     thread_local vector<uint64_t> bits;
-    long long num_blocks = mark_segment(low, high, base_primes, bits);
-    uint64_t* bp = bits.data();
-    long long seg_base_q = low / 30;
-    for (long long q = 0; q < num_blocks; ++q) {
-        long long nbase = 30 * (seg_base_q + q);
-        for (int k = 0; k < 8; ++k) {
-            long long n = nbase + WHEEL_R[k];
-            if (n < low) continue;
-            if (n > high) break;
-            size_t idx = (size_t)(8 * q + k);
-            if (bp[idx >> 6] & (1ULL << (idx & 63))) out_primes.push_back(n);
-        }
-    }
+    mark_segment(low, high, base_primes, bits);
+    scan_segment(low, high, bits, [&](long long n) { out_primes.push_back(n); });
 }
 
 // 计数 [low, high] 内素数个数（low>=2），不构造结果向量，省内存。
@@ -316,19 +323,8 @@ size_t count_primes_range(long long low, long long high,
     if (low < 7) low = 7;
 
     thread_local vector<uint64_t> bits;
-    long long num_blocks = mark_segment(low, high, base_primes, bits);
-    uint64_t* bp = bits.data();
-    long long seg_base_q = low / 30;
-    for (long long q = 0; q < num_blocks; ++q) {
-        long long nbase = 30 * (seg_base_q + q);
-        for (int k = 0; k < 8; ++k) {
-            long long n = nbase + WHEEL_R[k];
-            if (n < low) continue;
-            if (n > high) break;
-            size_t idx = (size_t)(8 * q + k);
-            if (bp[idx >> 6] & (1ULL << (idx & 63))) ++c;
-        }
-    }
+    mark_segment(low, high, base_primes, bits);
+    scan_segment(low, high, bits, [&](long long) { ++c; });
     return c;
 }
 
@@ -407,7 +403,7 @@ vector<long long> hybrid_sieve(long long low, long long high) {
     vector<char> is_prime(candidates.size(), 0);
 #pragma omp parallel for schedule(dynamic, 1024)
     for (long long i = 0; i < (long long)candidates.size(); ++i) {
-        if (is_prime_mr_hybrid(candidates[i])) {
+        if (is_prime_mr_fast(candidates[i])) {
             is_prime[i] = 1;
         }
     }
@@ -483,7 +479,7 @@ vector<long long> segmented_sieve_large(long long low, long long high) {
 }
 
 // ============================================================================
-//  素数计数函数 π(x)（用于第 n 个素数二分查找）
+//  素数计数函数 π(x)（分段筛计数版，用于 -v 自检与 lehmer_pi 交叉验证）
 // ============================================================================
 
 long long prime_count(long long x) {
@@ -500,7 +496,120 @@ long long prime_count(long long x) {
 }
 
 // ============================================================================
-//  查找第 n 个素数（使用二分法）
+//  Meissel–Lehmer 素数计数 π(x)（供第 n 个素数快速二分）
+//  对 x < LEHMER_SIEVE_LIMIT 直接查前缀表 O(1)；否则用 Lehmer 公式递归。
+//  phi 与 π 结果均记忆化，单次 π(x)（x 到 10^10 量级）亚毫秒级，
+//  彻底消除旧实现「二分每步都对 [2,x] 完整重筛」的巨额开销。
+//  注意：本函数为单线程使用（仅 find_nth_prime 与自检调用）。
+// ============================================================================
+
+const int LEHMER_SIEVE_LIMIT = 5'000'000;   // 前缀表与基础素数表上限
+const int LEHMER_PHI_N = 200'000;           // phi 记忆表 x 上限
+const int LEHMER_PHI_S = 7;                 // phi 记忆表 s 上限（前 7 个素数）
+
+static vector<int> g_lehmer_primes;         // <= LEHMER_SIEVE_LIMIT 的素数
+static vector<uint32_t> g_pi_small;         // pi(n), n < LEHMER_SIEVE_LIMIT
+static vector<vector<uint32_t>> g_phi;      // phi[s][x] for s<=7, x<LEHMER_PHI_N
+static once_flag g_lehmer_init_flag;
+
+// phi 与 π 的记忆化缓存（跨二分步骤复用，越查越快）。
+struct LehmerKey { uint64_t x; int s;
+    bool operator==(const LehmerKey& o) const { return x == o.x && s == o.s; }
+};
+struct LehmerKeyHash {
+    size_t operator()(const LehmerKey& k) const {
+        return (size_t)(k.x * 1000003ull + (uint64_t)(unsigned)k.s);
+    }
+};
+static unordered_map<LehmerKey, long long, LehmerKeyHash> g_phi_memo;
+static unordered_map<uint64_t, long long> g_pi_memo;
+
+static void init_lehmer() {
+    long long limit = LEHMER_SIEVE_LIMIT;
+    vector<uint8_t> is_prime((size_t)limit + 1, 1);
+    if (limit >= 0) is_prime[0] = 0;
+    if (limit >= 1) is_prime[1] = 0;
+    for (long long i = 2; i * i <= limit; ++i)
+        if (is_prime[(size_t)i])
+            for (long long j = i * i; j <= limit; j += i) is_prime[(size_t)j] = 0;
+    g_pi_small.assign((size_t)limit + 1, 0);
+    for (long long i = 2; i <= limit; ++i) {
+        g_pi_small[(size_t)i] = g_pi_small[(size_t)(i - 1)] + (is_prime[(size_t)i] ? 1 : 0);
+        if (is_prime[(size_t)i]) g_lehmer_primes.push_back((int)i);
+    }
+    // phi 记忆表：phi[s][x] = [1,x] 内不被前 s 个素数整除的个数
+    g_phi.assign(LEHMER_PHI_S + 1, vector<uint32_t>(LEHMER_PHI_N, 0));
+    for (int i = 0; i < LEHMER_PHI_N; ++i) g_phi[0][(size_t)i] = (uint32_t)i;
+    for (int s = 1; s <= LEHMER_PHI_S; ++s) {
+        uint32_t p = (uint32_t)g_lehmer_primes[s - 1];
+        for (int i = 0; i < LEHMER_PHI_N; ++i)
+            g_phi[(size_t)s][(size_t)i] =
+                g_phi[(size_t)(s - 1)][(size_t)i] - g_phi[(size_t)(s - 1)][(size_t)(i / p)];
+    }
+}
+
+// 精确整数平方根 / 立方根 / 四次方根（带校正，避免浮点截断误差）。
+static uint64_t lehmer_isqrt(uint64_t x) {
+    uint64_t r = (uint64_t)sqrtl((long double)x);
+    while ((r + 1) * (r + 1) <= x) ++r;
+    while (r * r > x) --r;
+    return r;
+}
+static uint64_t lehmer_iroot4(uint64_t x) {
+    uint64_t r = lehmer_isqrt(lehmer_isqrt(x));
+    while ((r + 1) * (r + 1) <= x / (r + 1) / (r + 1)) ++r;  // (r+1)^4 <= x
+    while (r * r > x / r / r) --r;                            // r^4 > x
+    return r;
+}
+static uint64_t lehmer_icbrt(uint64_t x) {
+    uint64_t lo = 0, hi = 2'100'000;
+    while (lo < hi) {
+        uint64_t mid = (lo + hi + 1) / 2;
+        if (mid * mid * mid <= x) lo = mid; else hi = mid - 1;
+    }
+    return lo;
+}
+
+// phi(x, s)：[1,x] 内不被前 s 个素数整除的整数个数。
+static long long lehmer_phi(uint64_t x, int s) {
+    if (s == 0) return (long long)x;
+    if (s == 1) return (long long)x - (long long)(x / 2);
+    if (s == 2) return (long long)x - (long long)(x / 2) - (long long)(x / 3) + (long long)(x / 6);
+    if (s == 3)
+        return (long long)x - (long long)(x / 2) - (long long)(x / 3) + (long long)(x / 6)
+             - (long long)(x / 5) + (long long)(x / 10) + (long long)(x / 15) - (long long)(x / 30);
+    if (s <= LEHMER_PHI_S && x < (uint64_t)LEHMER_PHI_N) return g_phi[(size_t)s][(size_t)x];
+    auto it = g_phi_memo.find(LehmerKey{x, s});
+    if (it != g_phi_memo.end()) return it->second;
+    long long r = lehmer_phi(x, s - 1) - lehmer_phi(x / (uint64_t)g_lehmer_primes[s - 1], s - 1);
+    g_phi_memo.emplace(LehmerKey{x, s}, r);
+    return r;
+}
+
+// π(x) 主入口。
+static long long lehmer_pi(uint64_t x) {
+    if (x < (uint64_t)LEHMER_SIEVE_LIMIT) return g_pi_small[(size_t)x];
+    auto it = g_pi_memo.find(x);
+    if (it != g_pi_memo.end()) return it->second;
+    uint64_t a = (uint64_t)lehmer_pi(lehmer_iroot4(x));
+    uint64_t b = (uint64_t)lehmer_pi(lehmer_isqrt(x));
+    uint64_t c = (uint64_t)lehmer_pi(lehmer_icbrt(x));
+    long long sum = lehmer_phi(x, (int)a) + (long long)(b + a - 2) * (b - a + 1) / 2;
+    for (uint64_t i = a + 1; i <= b; ++i) {
+        uint64_t w = x / (uint64_t)g_lehmer_primes[i - 1];
+        sum -= lehmer_pi(w);
+        if (i <= c) {
+            uint64_t lim = (uint64_t)lehmer_pi(lehmer_isqrt(w));
+            for (uint64_t j = i; j <= lim; ++j)
+                sum -= lehmer_pi(w / (uint64_t)g_lehmer_primes[j - 1]) - (long long)(j - 1);
+        }
+    }
+    g_pi_memo.emplace(x, sum);
+    return sum;
+}
+
+// ============================================================================
+//  查找第 n 个素数（二分，π(x) 用 Lehmer）
 // ============================================================================
 
 long long find_nth_prime(long long n) {
@@ -508,22 +617,23 @@ long long find_nth_prime(long long n) {
     if (n == 1) return 2;
     if (n == 2) return 3;
 
-    // 初始估计上下界
+    call_once(g_lehmer_init_flag, init_lehmer);
+
+    // 初始估计上下界（Rosser–Schoenfeld）
     double logn = log((double)n);
     double loglogn = log(logn);
     double approx = n * (logn + loglogn - 1.0 + (loglogn - 2.0) / logn);
     long long lower = max(5LL, (long long)(approx * 0.95));
     long long upper = (long long)(approx * 1.2) + 1000;
 
-    // 确保下界素数个数 <= n-2（去掉2和3）
-    while (prime_count(lower) >= n) lower = (lower * 2) / 3;
-    // 确保上界素数个数 >= n
-    while (prime_count(upper) < n) upper = (long long)(upper * 1.5) + 1000;
+    // 确保 lower < 第 n 个素数 <= upper
+    while ((uint64_t)lehmer_pi((uint64_t)lower) >= (uint64_t)n) lower = (lower * 2) / 3;
+    while ((uint64_t)lehmer_pi((uint64_t)upper) < (uint64_t)n) upper = (long long)(upper * 1.5) + 1000;
 
     // 二分搜索
     while (lower < upper) {
         long long mid = lower + (upper - lower) / 2;
-        if (prime_count(mid) >= n) {
+        if ((uint64_t)lehmer_pi((uint64_t)mid) >= (uint64_t)n) {
             upper = mid;
         } else {
             lower = mid + 1;
@@ -545,68 +655,88 @@ pair<long long, long long> get_range_by_digits(int digits) {
     return {low, high};
 }
 
-// 输出结果到标准输出或文件
-void output_results(const vector<long long>& primes, double elapsed, bool show_stats_only = false) {
-    ostream* out = &cout;
-    ofstream file_out;
-    if (!g_output_file.empty()) {
-        file_out.open(g_output_file);
-        if (!file_out) {
-            cerr << _("无法打开输出文件: ", "Cannot open output file: ") << g_output_file << endl;
-            return;
+// RAII 输出目标：未指定输出文件时写 stdout；指定时写入文件，并在析构时
+// 统一给出「结果已写入文件」的提示。open() 失败返回 false（已打印错误）。
+class OutputSink {
+public:
+    ostream& out() { return *stream_; }
+    bool open(const string& path, bool quiet) {
+        if (path.empty()) { stream_ = &cout; return true; }
+        file_.open(path);
+        if (!file_) {
+            cerr << _("无法打开输出文件: ", "Cannot open output file: ") << path << endl;
+            return false;
         }
-        out = &file_out;
+        stream_ = &file_;
+        path_ = path;
+        quiet_ = quiet;
+        return true;
+    }
+    ~OutputSink() {
+        if (file_.is_open()) {
+            file_.close();
+            if (!quiet_)
+                cout << _("结果已写入文件: ", "Results written to file: ") << path_ << endl;
+        }
     }
 
+private:
+    ostream* stream_ = &cout;
+    ofstream file_;
+    string path_;
+    bool quiet_ = false;
+};
+
+// 输出结果到标准输出或文件
+void output_results(const vector<long long>& primes, double elapsed, bool show_stats_only = false) {
+    OutputSink sink;
+    if (!sink.open(g_output_file, g_quiet)) return;
+    ostream& out = sink.out();
+
     if (primes.empty()) {
-        *out << _("该区间没有素数", "No primes in this range") << endl;
+        out << _("该区间没有素数", "No primes in this range") << endl;
         return;
     }
 
     if (!g_quiet) {
-        *out << _("\n找到 ", "\nFound ") << primes.size() << _(" 个素数", " primes");
+        out << _("\n找到 ", "\nFound ") << primes.size() << _(" 个素数", " primes");
         if (!show_stats_only) {
-            *out << ":" << endl;
+            out << ":" << endl;
         } else {
-            *out << endl;
+            out << endl;
         }
     }
 
     if (!show_stats_only) {
         const int max_display = g_quiet ? 0 : 200;
         if (max_display > 0 && !primes.empty()) {
-            *out << "----------------------------------------" << endl;
+            out << "----------------------------------------" << endl;
             int cnt = 0;
             size_t limit = min(primes.size(), (size_t)max_display);
             for (size_t i = 0; i < limit; ++i) {
-                *out << primes[i];
-                if (++cnt % 10 == 0) *out << '\n';
-                else *out << '\t';
+                out << primes[i];
+                if (++cnt % 10 == 0) out << '\n';
+                else out << '\t';
             }
-            if (cnt % 10 != 0) *out << '\n';
+            if (cnt % 10 != 0) out << '\n';
             if (primes.size() > (size_t)max_display) {
-                *out << _("... 还有 ", "... and ") << (primes.size() - max_display) << _(" 个未显示", " more not shown") << endl;
+                out << _("... 还有 ", "... and ") << (primes.size() - max_display) << _(" 个未显示", " more not shown") << endl;
             }
-            *out << "----------------------------------------" << endl;
+            out << "----------------------------------------" << endl;
         }
     }
 
     // 统计信息
-    *out << _("\n========== 统计信息 ==========", "\n========== Statistics ==========") << endl;
-    *out << _("素数总数: ", "Total primes: ") << primes.size() << endl;
-    *out << _("最小素数: ", "Smallest prime: ") << primes.front() << endl;
-    *out << _("最大素数: ", "Largest prime: ") << primes.back() << endl;
-    *out << _("耗时: ", "Time: ") << fixed << setprecision(3) << elapsed << _(" 秒", " seconds") << endl;
+    out << _("\n========== 统计信息 ==========", "\n========== Statistics ==========") << endl;
+    out << _("素数总数: ", "Total primes: ") << primes.size() << endl;
+    out << _("最小素数: ", "Smallest prime: ") << primes.front() << endl;
+    out << _("最大素数: ", "Largest prime: ") << primes.back() << endl;
+    out << _("耗时: ", "Time: ") << fixed << setprecision(3) << elapsed << _(" 秒", " seconds") << endl;
     if (primes.size() > 1) {
         double density = (double)primes.size() / (primes.back() - primes.front()) * 100;
-        *out << _("素数密度: ", "Prime density: ") << fixed << setprecision(4) << density << "%" << endl;
+        out << _("素数密度: ", "Prime density: ") << fixed << setprecision(4) << density << "%" << endl;
     }
-    *out << _("================================", "====================================") << endl;
-
-    if (!g_output_file.empty()) {
-        file_out.close();
-        if (!g_quiet) cout << _("结果已写入文件: ", "Results written to file: ") << g_output_file << endl;
-    }
+    out << _("================================", "====================================") << endl;
 }
 
 // ============================================================================
@@ -657,24 +787,12 @@ void run_check(uint64_t n) {
     auto end = steady_clock::now();
     double elapsed = duration<double>(end - start).count();
 
-    ostream* out = &cout;
-    ofstream file_out;
-    if (!g_output_file.empty()) {
-        file_out.open(g_output_file);
-        if (!file_out) {
-            cerr << _("无法打开输出文件: ", "Cannot open output file: ") << g_output_file << endl;
-            return;
-        }
-        out = &file_out;
-    }
+    OutputSink sink;
+    if (!sink.open(g_output_file, g_quiet)) return;
+    ostream& out = sink.out();
 
-    *out << n << (prime ? _(" 是素数", " is prime") : _(" 是合数", " is composite")) << endl;
-    *out << _("耗时: ", "Time: ") << elapsed << _(" 秒", " seconds") << endl;
-
-    if (!g_output_file.empty()) {
-        file_out.close();
-        if (!g_quiet) cout << _("结果已写入文件: ", "Results written to file: ") << g_output_file << endl;
-    }
+    out << n << (prime ? _(" 是素数", " is prime") : _(" 是合数", " is composite")) << endl;
+    out << _("耗时: ", "Time: ") << elapsed << _(" 秒", " seconds") << endl;
 }
 
 void run_nth(long long n) {
@@ -687,28 +805,16 @@ void run_nth(long long n) {
     auto end = steady_clock::now();
     double elapsed = duration<double>(end - start).count();
 
-    ostream* out = &cout;
-    ofstream file_out;
-    if (!g_output_file.empty()) {
-        file_out.open(g_output_file);
-        if (!file_out) {
-            cerr << _("无法打开输出文件: ", "Cannot open output file: ") << g_output_file << endl;
-            return;
-        }
-        out = &file_out;
-    }
+    OutputSink sink;
+    if (!sink.open(g_output_file, g_quiet)) return;
+    ostream& out = sink.out();
 
     if (prime > 0) {
-        *out << _("第 ", "The ") << n << _(" 个素数是: ", "-th prime is: ") << prime << endl;
+        out << _("第 ", "The ") << n << _(" 个素数是: ", "-th prime is: ") << prime << endl;
     } else {
-        *out << _("计算失败", "Failed") << endl;
+        out << _("计算失败", "Failed") << endl;
     }
-    *out << _("耗时: ", "Time: ") << elapsed << _(" 秒", " seconds") << endl;
-
-    if (!g_output_file.empty()) {
-        file_out.close();
-        if (!g_quiet) cout << _("结果已写入文件: ", "Results written to file: ") << g_output_file << endl;
-    }
+    out << _("耗时: ", "Time: ") << elapsed << _(" 秒", " seconds") << endl;
 }
 
 void run_performance() {
@@ -771,6 +877,41 @@ int run_verify() {
         report(buf, same);
     }
 
+    // 4) Lehmer π(x) 与已知 π 值、以及和分段筛 prime_count 交叉验证
+    {
+        call_once(g_lehmer_init_flag, init_lehmer);
+        struct { long long x; long long pi; } known_pi[] = {
+            {1000000000LL, 50847534},
+            {10000000000LL, 455052511},
+        };
+        for (auto& c : known_pi) {
+            long long got = lehmer_pi((uint64_t)c.x);
+            char buf[128];
+            snprintf(buf, sizeof(buf), "lehmer π(%lld) = %lld", c.x, got);
+            report(buf, got == c.pi);
+        }
+        // 分段筛 vs Lehmer 交叉验证（跨数量级）
+        long long xs[] = {1234567LL, 99999989LL, 100000000LL,
+                          150000000LL, 300000000LL, 500000000LL};
+        for (long long x : xs) {
+            long long p = prime_count(x), l = lehmer_pi((uint64_t)x);
+            char buf[160];
+            snprintf(buf, sizeof(buf), "π(%lld) prime_count=%lld lehmer=%lld", x, p, l);
+            report(buf, p == l);
+        }
+        // 已知第 n 个素数
+        struct { long long n; long long p; } nth_checks[] = {
+            {10, 29}, {100, 541}, {1000, 7919}, {10000, 104729},
+            {1000000, 15485863}, {10000000, 179424673},
+        };
+        for (auto& c : nth_checks) {
+            long long got = find_nth_prime(c.n);
+            char buf[128];
+            snprintf(buf, sizeof(buf), "第 %lld 个素数 = %lld", c.n, got);
+            report(buf, got == c.p);
+        }
+    }
+
     cout << _("\n验证完成，失败 ", "\nVerification done, ")
          << failures << _(" 项。", " failure(s).") << endl;
     return failures;
@@ -781,8 +922,8 @@ int run_verify() {
 // ============================================================================
 
 void run_interactive() {
-    cout << _("========== 超级素数筛（极致优化版 v8.0） ==========",
-              "========== Super Prime Sieve (Ultra Optimized v8.0) ==========")
+    cout << _("========== 超级素数筛（极致优化版 v9.0） ==========",
+              "========== Super Prime Sieve (Ultra Optimized v9.0) ==========")
          << endl;
     cout << _("支持范围: 2 ~ 10^18（更大可能极慢）",
               "Supported: 2 ~ 10^18 (larger may be slow)")
